@@ -1,6 +1,7 @@
 # https://spotlightkid.github.io/python-rtmidi/rtmidi.html
 import rtmidi
 from rtmidi.midiutil import open_midiinput
+from rtmidi.midiconstants import NOTE_ON, CONTROL_CHANGE
 
 # https://obsproject.com/docs/reference-frontend-api.html
 import obspython as obs
@@ -93,15 +94,18 @@ class Midi(object):
 
     def testInput(self, cmdType, channel, value):
         print(cmdType+"\t"+str(channel)+"\t"+str(value))
-
         for handler in self.handlers:
-            handler.handleMidi(cmdType, channel)
+            handler.handleMidi(cmdType, channel, value)
 
     def onMidi(self, event, data=None):
         message, deltatime = event
-        if message[0] == 144: # Note On
+
+        # Strip off the channel
+        message_type = message[0] & 0xf0
+
+        if message_type == NOTE_ON:
             self.testInput("Note", message[1], message[2])
-        elif message[0] == 176: # Control Change
+        elif message_type == CONTROL_CHANGE:
             self.testInput("CC", message[1], message[2])
 
 
@@ -138,7 +142,7 @@ class RecordingHandler(object):
         self.pauseChannel = pauseChannel
         self.unpauseChannel = unpauseChannel
 
-    def handleMidi(self, cmdType, channel):
+    def handleMidi(self, cmdType, channel, value):
         if self.cmdType != cmdType:
             return
 
@@ -176,7 +180,11 @@ class TransitionHandler(object):
     def addConfig(cls, props):
         addMidiTypeProp(props, cls.Keys.cmdType, "Transition to Scene midi type")
         addNoteProp(props, cls.Keys.transitionFirst, "First Transition to Scene Midi Note/Address")
-        obs.obs_properties_add_int(props, cls.Keys.duration, "Transition time (MS)", 0, 5000, 1)
+        transition_prop = obs.obs_properties_add_int(props, cls.Keys.duration, "Base transition time (MS) -- multiplied by Midi Value/100", 0, 5000, 1)
+        obs.obs_property_set_long_description(transition_prop, """This value will be multiplied by the MIDI value/100.
+e.g. if the MIDI note comes with a value/velocity of 100, then the base transition time will be used.
+If the note comes with a value/velocity of 50, then then the transition will take half the base transition time.
+If the note comes with a value/velocity of 0, then then there will be no transition time.""")
 
     @classmethod
     def fromSettings(cls, settings):
@@ -191,15 +199,15 @@ class TransitionHandler(object):
         self.transitionFirst = transitionFirst
         self.duration = duration
 
-    def handleMidi(self, cmdType, channel):
+    def handleMidi(self, cmdType, channel, value):
         if cmdType != self.cmdType:
             return
 
         sceneNumber = channel - self.transitionFirst
         if sceneNumber >= 0:
-            self.transition(sceneNumber)
+            self.transition(sceneNumber, value)
 
-    def transition(self, num):
+    def transition(self, num, value):
         trans = obs.obs_frontend_get_current_transition()
 
         scenes = obs.obs_frontend_get_scenes()
@@ -208,7 +216,8 @@ class TransitionHandler(object):
             return
 
         print(f"start transition to scene #{num}")
-        obs.obs_transition_start(trans, obs.OBS_TRANSITION_MODE_AUTO, self.duration, scenes[num])
+        duration = int(self.duration * (value / 100))
+        obs.obs_transition_start(trans, obs.OBS_TRANSITION_MODE_AUTO, duration, scenes[num])
         # obs_frontend_set_current_preview_scene
         # obs_frontend_get_current_preview_scene
 
