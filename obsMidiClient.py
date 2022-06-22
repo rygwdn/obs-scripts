@@ -51,8 +51,20 @@ class Midi(object):
     def initializeFromSettings(cls, settings):
         cls.shutdown()
 
+        # Port names contain the port number by default, but this changes based on insertion
+        # order. So we'll try to find the closest match by removing the last character (the number)
+        availablePorts = rtmidi.MidiIn().get_ports()
+        port = obs.obs_data_get_string(settings, cls.Keys.port)
+        if port not in availablePorts:
+            print("port " + port + " not found")
+            possibleMatches = list(filter(lambda prt: prt[:-1] == port[:-1], availablePorts))
+            if len(possibleMatches) == 1:
+                port = possibleMatches[0]
+                obs.obs_data_set_string(settings, cls.Keys.port, port)
+                print("using port " + port + " instead")
+
         cls._instance = Midi(
-            port=obs.obs_data_get_string(settings, cls.Keys.port),
+            port=port,
             handlers = [
                 TransitionHandler.fromSettings(settings),
                 RecordingHandler.fromSettings(settings)
